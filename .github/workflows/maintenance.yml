@@ -1,0 +1,23 @@
+# Free Supabase projects pause after 7 days idle and have no backups.
+# Add repo secrets: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_DB_URL (connection string, session pooler).
+name: Keep-alive and backup
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsS "${{ secrets.SUPABASE_URL }}/auth/v1/health" -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}"
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          pg_dump "${{ secrets.SUPABASE_DB_URL }}" --schema=public --no-owner -Fc -f backup.dump
+      - uses: actions/upload-artifact@v4
+        with:
+          name: db-backup
+          path: backup.dump
+          retention-days: 14

@@ -1,0 +1,49 @@
+# Deploys the web app to GitHub Pages and links to the latest APK.
+# Repo secrets: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY (the public/publishable key).
+# Settings -> Pages -> Source: GitHub Actions.
+name: Deploy web app
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_PUBLIC_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+      - name: Add APK download page
+        run: |
+          cat > dist/download.html <<HTML
+          <!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Download DataTransfer</title>
+          <body style="font-family:system-ui;max-width:480px;margin:48px auto;padding:0 16px;line-height:1.5">
+          <h1>DataTransfer for Android</h1>
+          <p><a style="display:inline-block;padding:14px 20px;background:#2850C4;color:#fff;border-radius:10px;text-decoration:none;font-weight:600" href="https://github.com/${{ github.repository }}/releases/latest/download/DataTransfer.apk">Download the latest APK</a></p>
+          <p>Your phone will ask you to allow installing apps from this browser. That is expected for apps outside the Play Store.</p>
+          <p><a href="./">Or use the web version</a></p>
+          </body>
+          HTML
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: dist }
+      - id: deploy
+        uses: actions/deploy-pages@v4

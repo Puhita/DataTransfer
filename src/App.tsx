@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { configured, supabase } from './lib/supabase'
 import { keystore } from './lib/keystore'
+import { stopPush } from './lib/push'
 import { getMyProfile, type ProfileRow } from './lib/api'
 import { AuthScreen } from './features/Auth'
 import { SetupScreen, UnlockScreen } from './features/Onboarding'
@@ -46,6 +47,7 @@ export function App() {
   }, [resolve])
 
   const logout = useCallback(async () => {
+    await stopPush()
     keystore.clear()
     await supabase.auth.signOut()
   }, [])
@@ -57,12 +59,11 @@ export function App() {
 
   if (!configured)
     return (
-      <div className="center">
-        <div className="card">
-          <h1>Not configured</h1>
-          <p>
-            Copy <code>.env.example</code> to <code>.env.local</code> and set <code>VITE_SUPABASE_URL</code> and{' '}
-            <code>VITE_SUPABASE_ANON_KEY</code>. See README.md.
+      <div className="center-screen">
+        <div className="authcard">
+          <h1 className="t-h1" style={{ margin: 0 }}>Not configured</h1>
+          <p className="t-body muted" style={{ margin: 0 }}>
+            Create <code>.env.local</code> and set <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code>. See README.md.
           </p>
         </div>
       </div>
@@ -70,14 +71,18 @@ export function App() {
 
   switch (stage.kind) {
     case 'loading':
-      return <div className="center">Loading…</div>
+      return (
+        <div className="center-screen" aria-busy="true">
+          <span className="spin" aria-label="Loading" />
+        </div>
+      )
     case 'error':
       return (
-        <div className="center">
-          <div className="card">
-            <h1>Something went wrong</h1>
-            <p className="err">{stage.message}</p>
-            <button onClick={() => location.reload()}>Reload</button>
+        <div className="center-screen">
+          <div className="authcard">
+            <h1 className="t-h1" style={{ margin: 0 }}>Something went wrong</h1>
+            <div className="banner banner-err" role="alert"><div className="body">{stage.message}</div></div>
+            <button className="btn btn-primary btn-block" onClick={() => location.reload()}>Reload</button>
           </div>
         </div>
       )

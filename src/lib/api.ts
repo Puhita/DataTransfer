@@ -275,11 +275,23 @@ export async function checkPeerKeyChange(peer: PeerInfo): Promise<'new' | 'same'
   }
 }
 
-export async function acceptPeerKeyChange(peer: PeerInfo): Promise<void> {
+/** User confirmed the safety number out-of-band (or accepted new keys after doing so). */
+export async function markPeerVerified(peer: PeerInfo): Promise<void> {
   const fp = await keyFingerprint({ encPublic: peer.enc_public_key, signPublic: peer.sign_public_key })
   try {
     localStorage.setItem(`dt:fp:${peer.id}`, fp)
+    localStorage.setItem(`dt:verified:${peer.id}`, fp)
   } catch {
     /* storage unavailable: nothing to persist */
+  }
+}
+
+/** Verified only while the stored verified fingerprint still matches the peer's current keys. */
+export async function isPeerVerified(peer: PeerInfo): Promise<boolean> {
+  const fp = await keyFingerprint({ encPublic: peer.enc_public_key, signPublic: peer.sign_public_key })
+  try {
+    return localStorage.getItem(`dt:verified:${peer.id}`) === fp
+  } catch {
+    return false
   }
 }

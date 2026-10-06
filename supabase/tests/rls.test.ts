@@ -43,6 +43,7 @@ beforeAll(async () => {
   db = new PGlite({ extensions: { citext } })
   await db.exec(STUB)
   await db.exec(readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8'))
+  await db.exec(readFileSync(new URL('../migrations/0002_push.sql', import.meta.url), 'utf8'))
   await db.exec(`insert into auth.users values ('${A}','alice@x.io'),('${B}','bob@x.io'),('${C}','carol@x.io')`)
   await as(A, () => profile(A, 'alice'))
   await as(B, () => profile(B, 'bob'))
@@ -147,5 +148,30 @@ describe('chat lifecycle + message access', () => {
     expect((await as(A, () => db.query(`select 1 from chats where id='${chat}'`))).rows).toHaveLength(1)
     await as(B, () => db.query(`select delete_chat('${chat}')`))
     expect((await as(A, () => db.query(`select 1 from messages`))).rows).toHaveLength(0)
+  })
+})
+
+describe('push tokens', () => {
+  const T1 = 'token-aaaaaaaaaaaaaaaaaaaaaaaa'
+
+  it('registers a token and moves it when another account logs in on the same device', async () => {
+    await as(A, () => db.query(`select register_push_token('${T1}')`))
+    expect((await db.query<{ user_id: string }>(`select user_id from push_tokens where token='${T1}'`)).rows[0].user_id).toBe(A)
+    await as(B, () => db.query(`select register_push_token('${T1}')`))
+    expect((await db.query<{ user_id: string }>(`select user_id from push_tokens where token='${T1}'`)).rows[0].user_id).toBe(B)
+  })
+
+  it('hides the table from clients and rejects bad tokens', async () => {
+    // a token exists (owned by B) but RLS has no policy, so no client can read any token, even its owner
+    expect((await as(A, () => db.query(`select * from push_tokens`))).rows).toHaveLength(0)
+    expect((await as(B, () => db.query(`select * from push_tokens`))).rows).toHaveLength(0)
+    await expect(as(A, () => db.query(`select register_push_token('short')`))).rejects.toThrow(/bad token/)
+  })
+
+  it('only the owner can unregister', async () => {
+    await as(A, () => db.query(`select unregister_push_token('${T1}')`)) // A does not own it now
+    expect((await db.query(`select 1 from push_tokens where token='${T1}'`)).rows).toHaveLength(1)
+    await as(B, () => db.query(`select unregister_push_token('${T1}')`))
+    expect((await db.query(`select 1 from push_tokens where token='${T1}'`)).rows).toHaveLength(0)
   })
 })

@@ -1,0 +1,63 @@
+# Builds a signed APK and attaches it to a GitHub Release.
+# Trigger: push a tag like v1.0.0, or run manually.
+# Repo secrets: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY,
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+#   (later, for push) GOOGLE_SERVICES_JSON
+name: Build Android APK
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version name, e.g. 1.0.0
+        required: true
+permissions:
+  contents: write
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - run: npm ci
+      - run: npm test
+      - name: Work out the version
+        run: |
+          V="${{ github.event.inputs.version || github.ref_name }}"
+          echo "APP_VERSION_NAME=${V#v}" >> "$GITHUB_ENV"
+          echo "APP_VERSION_CODE=${{ github.run_number }}" >> "$GITHUB_ENV"
+          echo "TAG=v${V#v}" >> "$GITHUB_ENV"
+      - run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_PUBLIC_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+      - name: Firebase config (push notifications)
+        run: |
+          if [ -n "$GSJ" ]; then echo "$GSJ" > android/app/google-services.json; fi
+        env:
+          GSJ: ${{ secrets.GOOGLE_SERVICES_JSON }}
+      - run: npx cap sync android
+      - name: Restore signing key
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
+      - name: Build release APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon
+        env:
+          ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      - name: Name the APK
+        run: cp android/app/build/outputs/apk/release/app-release.apk DataTransfer.apk
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: DataTransfer ${{ env.TAG }}
+          files: DataTransfer.apk
+          generate_release_notes: true

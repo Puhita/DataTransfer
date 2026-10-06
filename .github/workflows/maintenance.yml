@@ -1,15 +1,11 @@
-# Free Supabase projects pause after 7 days idle and have no backups.
-# Add repo secrets: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_DB_URL (connection string, session pooler).
-name: Keep-alive and backup
+# Free Supabase projects have no backups. Keep-alive lives in keepalive.yml.
+# Add repo secret: SUPABASE_DB_URL (connection string, session pooler).
+name: Database backup
 on:
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
 jobs:
-  keepalive:
-    runs-on: ubuntu-latest
-    steps:
-      - run: curl -fsS "${{ secrets.SUPABASE_URL }}/auth/v1/health" -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}"
   backup:
     runs-on: ubuntu-latest
     steps:

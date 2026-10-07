@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { burnMessage, type Decoded, type PeerInfo, type ProfileRow, type RoomInfo } from '../lib/api'
+import { burnMessage, deleteMessage, type Decoded, type PeerInfo, type ProfileRow, type RoomInfo } from '../lib/api'
 import { Icon } from '../ui/Icon'
 import { useRoom } from './useRoom'
 
@@ -107,6 +107,16 @@ export function SecretsRoom(props: { me: ProfileRow; members: PeerInfo[]; room: 
             m={m}
             mine={m.senderId === props.me.id}
             from={m.senderId === props.me.id ? 'you' : nameOf(m.senderId)}
+            onDelete={async () => {
+              if (!window.confirm(`Delete "${parse(m.text)?.name ?? 'this secret'}" for everyone in this room? This cannot be undone.`)) return
+              await deleteMessage(m.id)
+              setItems((cur) => cur.filter((x) => x.id !== m.id))
+              setKept((k) => {
+                const n = new Map(k)
+                n.delete(m.id)
+                return n
+              })
+            }}
             onReveal={async () => {
               if (m.burn && m.senderId !== props.me.id) {
                 setKept((k) => new Map(k).set(m.id, m))
@@ -172,13 +182,18 @@ export function SecretsRoom(props: { me: ProfileRow; members: PeerInfo[]; room: 
   )
 }
 
-function SecretItem(props: { m: Decoded; mine: boolean; from: string; onReveal: () => Promise<void> }) {
+function SecretItem(props: { m: Decoded; mine: boolean; from: string; onReveal: () => Promise<void>; onDelete: () => Promise<void> }) {
   const { m } = props
   const [shown, setShown] = useState(false)
   const [left, setLeft] = useState(0) // seconds until the clipboard is cleared; 0 = not copied
   const [err, setErr] = useState('')
   const timer = useRef<number>(0)
   const p = parse(m.text)
+
+  const remove = () => {
+    setErr('')
+    props.onDelete().catch((e: Error) => setErr(e.message))
+  }
 
   const pending = useRef(false) // clipboard holds this secret and has not been cleared yet
 
@@ -194,6 +209,10 @@ function SecretItem(props: { m: Decoded; mine: boolean; from: string; onReveal: 
     return (
       <article className="scard">
         <div className="banner banner-err" role="alert"><Icon name="warn" /><div className="body">This entry couldn't be verified or decrypted, so it isn't shown.</div></div>
+        <div className="sactions">
+          <button className="btn btn-secondary" onClick={remove}><Icon name="trash" />Delete</button>
+          {err && <span className="hint err" role="alert"><Icon name="warn" size="sm" />{err}</span>}
+        </div>
       </article>
     )
 
@@ -269,6 +288,10 @@ function SecretItem(props: { m: Decoded; mine: boolean; from: string; onReveal: 
         <button className="btn btn-secondary" onClick={copy} disabled={!canCopy}>
           <Icon name={left > 0 ? 'check' : 'copy'} />
           {left > 0 ? 'Copied' : 'Copy'} <span className="sub">{left > 0 ? `clears in ${left}s` : `clears in ${CLIPBOARD_CLEAR_S}s`}</span>
+        </button>
+        <button className="btn btn-danger-outline" onClick={remove} aria-label={`Delete ${p.name}`}>
+          <Icon name="trash" />
+          Delete
         </button>
         {!canCopy && <span className="t-small muted">Reveal once to copy. It's deleted from the server when you do.</span>}
         {left > 0 && <span className="notice ok" role="status">The clipboard clears in {left}s.</span>}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { RealtimeChannel } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import {
   decodeRow,
@@ -17,6 +18,10 @@ export function useRoom(me: ProfileRow, members: PeerInfo[], room: RoomInfo) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const seen = useRef(new Set<string>())
+  const channel = useRef<RealtimeChannel | null>(null)
+  const lastTypingSent = useRef(0)
+  const typingTimers = useRef(new Map<string, number>())
+  const [typing, setTyping] = useState<string[]>([]) // user ids currently typing
 
   // depend on the signing keys themselves, not the array identity, so list reloads don't refetch the room
   const keyMap = members.map((m) => m.id + ':' + m.sign_public_key).join('|')
@@ -29,14 +34,21 @@ export function useRoom(me: ProfileRow, members: PeerInfo[], room: RoomInfo) {
     [me.id, me.sign_public_key, keyMap],
   )
 
+  const stopTyping = useCallback((uid: string) => {
+    window.clearTimeout(typingTimers.current.get(uid))
+    typingTimers.current.delete(uid)
+    setTyping((cur) => (cur.includes(uid) ? cur.filter((x) => x !== uid) : cur))
+  }, [])
+
   const add = useCallback(
     async (row: MessageRow) => {
       if (seen.current.has(row.id)) return
       seen.current.add(row.id)
       const d = await decodeRow(row, me.id, signKeyOf(row.sender_id))
+      stopTyping(row.sender_id)
       setItems((cur) => [...cur, d])
     },
-    [me.id, signKeyOf],
+    [me.id, signKeyOf, stopTyping],
   )
 
   useEffect(() => {
@@ -67,12 +79,34 @@ export function useRoom(me: ProfileRow, members: PeerInfo[], room: RoomInfo) {
         const id = (p.old as { id?: string }).id
         if (id) setItems((cur) => cur.filter((m) => m.id !== id))
       })
+      .on('broadcast', { event: 'typing' }, (p) => {
+        // payload carries only the sender's user id, never content; only known members count
+        const uid = (p.payload as { u?: string } | undefined)?.u
+        if (!uid || uid === me.id || !signKeyOf(uid)) return
+        setTyping((cur) => (cur.includes(uid) ? cur : [...cur, uid]))
+        window.clearTimeout(typingTimers.current.get(uid))
+        typingTimers.current.set(uid, window.setTimeout(() => stopTyping(uid), 4000))
+      })
       .subscribe()
+    channel.current = ch
+    const timers = typingTimers.current
     return () => {
       alive = false
+      timers.forEach((t) => window.clearTimeout(t))
+      timers.clear()
+      setTyping([])
+      channel.current = null
       void supabase.removeChannel(ch)
     }
-  }, [room.id, me.id, signKeyOf, add])
+  }, [room.id, me.id, signKeyOf, add, stopTyping])
+
+  /** Tell the others we are typing (throttled to once per 2s). */
+  const notifyTyping = useCallback(() => {
+    const now = Date.now()
+    if (now - lastTypingSent.current < 2000) return
+    lastTypingSent.current = now
+    void channel.current?.send({ type: 'broadcast', event: 'typing', payload: { u: me.id } })
+  }, [me.id])
 
   const send = useCallback(
     async (plaintext: string, opts?: { expiresAt?: string | null; burn?: boolean }) => {
@@ -87,5 +121,5 @@ export function useRoom(me: ProfileRow, members: PeerInfo[], room: RoomInfo) {
     [room, me.id, add],
   )
 
-  return { items, error, loading, send, setItems }
+  return { items, error, loading, send, setItems, typing, notifyTyping }
 }

@@ -148,6 +148,11 @@ export async function startChat(me: ProfileRow, peer: PeerInfo): Promise<string>
 
 export const acceptChat = async (id: string) => fail((await supabase.rpc('accept_chat', { p_chat: id })).error)
 export const deleteChat = async (id: string) => fail((await supabase.rpc('delete_chat', { p_chat: id })).error)
+export async function deleteMessage(id: string): Promise<void> {
+  const { data, error } = await supabase.from('messages').delete().eq('id', id).select('id')
+  fail(error)
+  if (!data?.length) throw new Error('Not allowed, or already deleted.')
+}
 export const burnMessage = async (id: string) => fail((await supabase.rpc('burn_message', { p_msg: id })).error)
 
 export async function listChats(myId: string): Promise<ChatInfo[]> {

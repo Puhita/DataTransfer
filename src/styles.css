@@ -451,3 +451,20 @@ body { min-height: 100%; }
 /* long names (usernames, project names) truncate instead of pushing the layout */
 .row .name, .pane-head .nm h1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .req .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* emoji picker + typing indicator */
+.emoji { position: relative; align-self: flex-end; }
+.emoji > .ghost { background: var(--panel); color: var(--text); border: 1px solid var(--border-strong); border-radius: 12px; min-height: 46px; min-width: 46px; font-size: 20px; cursor: pointer; }
+.emoji > .ghost:hover { background: var(--panel-2); }
+.emojipop { position: absolute; bottom: 54px; left: 0; width: 300px; max-width: 80vw; background: var(--panel); border: 1px solid var(--border-strong); border-radius: 12px; padding: 8px; z-index: 20; box-shadow: 0 8px 24px rgb(0 0 0 / .25); }
+.emojitabs { display: flex; gap: 4px; margin-bottom: 6px; }
+.emojitabs button, .emojigrid button { background: transparent; color: inherit; border: 0; padding: 4px 6px; font-size: 20px; line-height: 1.2; border-radius: 6px; cursor: pointer; }
+.emojitabs button.on { background: var(--panel-2); }
+.emojigrid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; max-height: 190px; overflow-y: auto; }
+.emojigrid button:hover { background: var(--panel-2); }
+.msg.big { font-size: 34px; line-height: 1.2; background: transparent; color: inherit; padding: 2px 6px; }
+.msg.big .meta { color: var(--muted); }
+.typing { align-self: flex-start; font-size: 13px; color: var(--muted); padding: 2px 6px; }
+.dots i { font-style: normal; animation: blink 1.2s infinite; } .dots i:nth-child(2) { animation-delay: .2s; } .dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%, 60%, 100% { opacity: .2; } 30% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .dots i { animation: none; } }

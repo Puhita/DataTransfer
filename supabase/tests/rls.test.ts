@@ -45,6 +45,7 @@ beforeAll(async () => {
   await db.exec(readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8'))
   await db.exec(readFileSync(new URL('../migrations/0002_push.sql', import.meta.url), 'utf8'))
   await db.exec(readFileSync(new URL('../migrations/0003_projects.sql', import.meta.url), 'utf8'))
+  await db.exec(readFileSync(new URL('../migrations/0004_delete_secrets.sql', import.meta.url), 'utf8'))
   await db.exec(`insert into auth.users values ('${A}','alice@x.io'),('${B}','bob@x.io'),('${C}','carol@x.io')`)
   await as(A, () => profile(A, 'alice'))
   await as(B, () => profile(B, 'bob'))
@@ -137,6 +138,17 @@ describe('chat lifecycle + message access', () => {
     expect((await as(B, () => db.query(`select 1 from messages where id='${id}'`))).rows).toHaveLength(1)
     await as(B, () => db.query(`select burn_message('${id}')`))
     expect((await as(B, () => db.query(`select 1 from messages where id='${id}'`))).rows).toHaveLength(0)
+  })
+
+  it('either member can delete secrets, only the sender can delete chat messages, outsiders neither', async () => {
+    const ins = (room: string) => as(A, () => db.query<{ id: string }>(`insert into messages (room_id, sender_id, ciphertext, nonce, signature) values ('${room}','${A}','c','n','s') returning id`))
+    const sec = (await ins(secretsRoom)).rows[0].id
+    const msg = (await ins(chatRoom)).rows[0].id
+    const del = (uid: string, id: string) => as(uid, () => db.query(`delete from messages where id='${id}' returning id`))
+    expect((await del(C, sec)).rows).toHaveLength(0)
+    expect((await del(B, msg)).rows).toHaveLength(0)
+    expect((await del(B, sec)).rows).toHaveLength(1)
+    expect((await del(A, msg)).rows).toHaveLength(1)
   })
 
   it('profiles keys are immutable but discoverability can be toggled', async () => {

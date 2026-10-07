@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import type { Decoded, PeerInfo, ProfileRow, RoomInfo } from '../lib/api'
 import { Icon } from '../ui/Icon'
+import { EmojiPicker } from './EmojiPicker'
 import { useRoom } from './useRoom'
+
+// a message made only of 1-3 emoji is shown large
+const EMOJI_ONLY = /^(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|\p{Emoji_Modifier})*\s*){1,3}$/u
 
 const dayLabel = (iso: string) => {
   const d = new Date(iso)
@@ -17,15 +21,16 @@ const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-di
 
 /** `title` is what the room is called in copy: '@bob' for a 1:1 chat, the project name for a group. */
 export function ChatRoom(props: { me: ProfileRow; members: PeerInfo[]; room: RoomInfo; title: string; group?: boolean }) {
-  const { items, error, loading, send } = useRoom(props.me, props.members, props.room)
+  const { items, error, loading, send, typing, notifyTyping } = useRoom(props.me, props.members, props.room)
   const [text, setText] = useState('')
   const bottom = useRef<HTMLDivElement>(null)
+  const input = useRef<HTMLTextAreaElement>(null)
   const title = props.title
   const nameOf = (id: string) => '@' + (props.members.find((m) => m.id === id)?.username ?? 'unknown')
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: 'end' })
-  }, [items.length, loading])
+  }, [items.length, loading, typing.length])
 
   async function submit(e?: FormEvent) {
     e?.preventDefault()
@@ -38,6 +43,27 @@ export function ChatRoom(props: { me: ProfileRow; members: PeerInfo[]; room: Roo
       setText(t)
     }
   }
+
+  function insertEmoji(emoji: string) {
+    const el = input.current
+    const start = el?.selectionStart ?? text.length
+    const end = el?.selectionEnd ?? text.length
+    setText(text.slice(0, start) + emoji + text.slice(end))
+    requestAnimationFrame(() => {
+      el?.focus()
+      el?.setSelectionRange(start + emoji.length, start + emoji.length)
+    })
+    notifyTyping()
+  }
+
+  const typingLabel =
+    typing.length === 0
+      ? ''
+      : typing.length === 1
+        ? `${nameOf(typing[0])} is typing`
+        : typing.length === 2
+          ? `${nameOf(typing[0])} and ${nameOf(typing[1])} are typing`
+          : 'Several people are typing'
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -61,7 +87,7 @@ export function ChatRoom(props: { me: ProfileRow; members: PeerInfo[]; room: Roo
           <span className="meta" style={{ color: 'var(--muted)' }}>{time(m.createdAt)}</span>
         </div>
       ) : (
-        <div key={m.id} className={'msg ' + (mine ? 'mine' : 'theirs')}>
+        <div key={m.id} className={'msg ' + (mine ? 'mine' : 'theirs') + (EMOJI_ONLY.test(m.text) ? ' big' : '')}>
           {props.group && !mine && <span className="sender">{nameOf(m.senderId)}</span>}
           {m.text}
           <span className="meta">{time(m.createdAt)}</span>
@@ -86,6 +112,11 @@ export function ChatRoom(props: { me: ProfileRow; members: PeerInfo[]; room: Roo
           </p>
         )}
         {rows}
+        {typingLabel && (
+          <div className="typing" role="status">
+            {typingLabel}<span className="dots"><i>.</i><i>.</i><i>.</i></span>
+          </div>
+        )}
         <div ref={bottom} />
       </div>
       {error && (
@@ -94,14 +125,19 @@ export function ChatRoom(props: { me: ProfileRow; members: PeerInfo[]; room: Roo
         </div>
       )}
       <form className="composer" onSubmit={submit}>
+        <EmojiPicker onPick={insertEmoji} />
         <textarea
+          ref={input}
           className="input"
           rows={1}
           placeholder={`Message ${title}`}
           aria-label="Message"
           maxLength={4000}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value)
+            if (e.target.value) notifyTyping()
+          }}
           onKeyDown={onKey}
         />
         <button className="btn btn-primary" disabled={!text.trim()} aria-label="Send">

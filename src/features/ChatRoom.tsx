@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import type { ChatInfo, Decoded, ProfileRow, RoomInfo } from '../lib/api'
+import type { Decoded, PeerInfo, ProfileRow, RoomInfo } from '../lib/api'
 import { Icon } from '../ui/Icon'
 import { useRoom } from './useRoom'
 
@@ -15,11 +15,13 @@ const dayLabel = (iso: string) => {
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
-export function ChatRoom(props: { me: ProfileRow; chat: ChatInfo; room: RoomInfo }) {
-  const { items, error, loading, send } = useRoom(props.me, props.chat, props.room)
+/** `title` is what the room is called in copy: '@bob' for a 1:1 chat, the project name for a group. */
+export function ChatRoom(props: { me: ProfileRow; members: PeerInfo[]; room: RoomInfo; title: string; group?: boolean }) {
+  const { items, error, loading, send } = useRoom(props.me, props.members, props.room)
   const [text, setText] = useState('')
   const bottom = useRef<HTMLDivElement>(null)
-  const peer = props.chat.peer.username
+  const title = props.title
+  const nameOf = (id: string) => '@' + (props.members.find((m) => m.id === id)?.username ?? 'unknown')
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: 'end' })
@@ -55,11 +57,12 @@ export function ChatRoom(props: { me: ProfileRow; chat: ChatInfo; room: RoomInfo
       m.text === null ? (
         <div className="msg fail" role="alert" key={m.id}>
           <div className="ttl"><Icon name="warn" />Signature check failed</div>
-          <p>This message couldn't be verified as sent by {mine ? 'you' : '@' + peer}, so it isn't shown.</p>
+          <p>This message couldn't be verified as sent by {mine ? 'you' : nameOf(m.senderId)}, so it isn't shown.</p>
           <span className="meta" style={{ color: 'var(--muted)' }}>{time(m.createdAt)}</span>
         </div>
       ) : (
         <div key={m.id} className={'msg ' + (mine ? 'mine' : 'theirs')}>
+          {props.group && !mine && <span className="sender">{nameOf(m.senderId)}</span>}
           {m.text}
           <span className="meta">{time(m.createdAt)}</span>
         </div>
@@ -79,7 +82,7 @@ export function ChatRoom(props: { me: ProfileRow; chat: ChatInfo; room: RoomInfo
         )}
         {!loading && items.length === 0 && (
           <p className="t-body muted" style={{ margin: 'auto', textAlign: 'center' }}>
-            No messages yet. Say hi to @{peer}. Everything here is encrypted on your device first.
+            No messages yet. Say hi to {title}. Everything here is encrypted on your device first.
           </p>
         )}
         {rows}
@@ -94,7 +97,7 @@ export function ChatRoom(props: { me: ProfileRow; chat: ChatInfo; room: RoomInfo
         <textarea
           className="input"
           rows={1}
-          placeholder={`Message @${peer}`}
+          placeholder={`Message ${title}`}
           aria-label="Message"
           maxLength={4000}
           value={text}

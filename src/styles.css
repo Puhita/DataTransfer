@@ -335,6 +335,7 @@ textarea.input { padding: 12px 14px; resize: vertical; display: block; }
 .msg.mine .meta { color: rgb(255 255 255 / .9); text-align: right; }
 .msg.theirs { align-self: flex-start; background: var(--theirs); color: var(--on-theirs); border-bottom-left-radius: 4px; }
 .msg.theirs .meta { color: var(--muted); }
+.msg .sender { display: block; margin-bottom: 2px; font-size: 12px; line-height: 16px; font-weight: 700; color: var(--accent); }
 .msg.loading { min-width: 260px; display: flex; flex-direction: column; gap: 8px; }
 .msg.loading .state { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
 .skel { height: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--border) 25%, var(--panel) 50%, var(--border) 75%); background-size: 200% 100%; animation: sheen 1.6s linear infinite; }
@@ -447,3 +448,6 @@ body { min-height: 100%; }
 @media (max-width: 420px) { .keybox { grid-template-columns: repeat(3, 1fr); } .compare { grid-template-columns: 1fr; } }
 .row { font: inherit; }
 @media (max-width: 720px) { .banner-wrap { padding: 12px 12px 0 !important; } }
+/* long names (usernames, project names) truncate instead of pushing the layout */
+.row .name, .pane-head .nm h1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.req .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

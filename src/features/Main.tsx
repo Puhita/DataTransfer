@@ -6,14 +6,19 @@ import {
   acceptChat,
   deleteChat,
   findUsers,
+  deleteProject,
   listChats,
+  listProjects,
   startChat,
   type ChatInfo,
   type PeerInfo,
+  type ProjectInfo,
   type ProfileRow,
 } from '../lib/api'
 import { Avatar, Icon } from '../ui/Icon'
 import { ChatView } from './ChatView'
+import { NewProject } from './NewProject'
+import { ProjectView } from './ProjectView'
 import { Settings } from './Settings'
 
 const IDLE_LOCK_MS = 15 * 60 * 1000
@@ -27,13 +32,17 @@ export function Main(props: {
 }) {
   const me = props.profile
   const [chats, setChats] = useState<ChatInfo[]>([])
+  const [projects, setProjects] = useState<ProjectInfo[]>([])
+  const [showNewProject, setShowNewProject] = useState(false)
   const [selected, setSelected] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [error, setError] = useState('')
 
   const reload = useCallback(async () => {
     try {
-      setChats(await listChats(me.id))
+      const [c, p] = await Promise.all([listChats(me.id), listProjects()])
+      setChats(c)
+      setProjects(p)
     } catch (e) {
       setError((e as Error).message)
     }
@@ -44,6 +53,9 @@ export function Main(props: {
     const ch = supabase
       .channel(`chats:${me.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'chats' }, () => void reload())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, () => void reload())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'project_members' }, () => void reload())
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms' }, () => void reload())
       .subscribe()
     return () => void supabase.removeChannel(ch)
   }, [me.id, reload])
@@ -71,6 +83,7 @@ export function Main(props: {
   }, [props.onLock])
 
   const current = chats.find((c) => c.id === selected) ?? null
+  const currentProject = projects.find((p) => p.id === selected) ?? null
   const incoming = chats.filter((c) => c.incoming)
   const rest = chats.filter((c) => !c.incoming)
 
@@ -85,7 +98,7 @@ export function Main(props: {
   }
 
   return (
-    <div className="app" data-view={current ? 'room' : 'list'}>
+    <div className="app" data-view={current || currentProject ? 'room' : 'list'}>
       <aside className="sidebar" aria-label="Chats">
         <div className="sb-head">
           <Avatar name={me.username} />
@@ -137,6 +150,27 @@ export function Main(props: {
           </>
         )}
 
+        <div className="sb-section">
+          <span className="t-label">Projects</span>
+          <button className="btn btn-ghost btn-sm" onClick={() => setShowNewProject(true)}>
+            <Icon name="plus" size="sm" />
+            New
+          </button>
+        </div>
+        <div className="sb-list">
+          {projects.length === 0 && <p className="t-small muted" style={{ margin: 0, padding: '4px 10px' }}>No projects yet. Create one to share a chat and secrets with a team.</p>}
+          {projects.map((p) => (
+            <button key={p.id} className="row" aria-current={p.id === selected ? 'true' : undefined} onClick={() => setSelected(p.id)}>
+              <span className="avatar"><Icon name="users" /></span>
+              <span className="grow">
+                <div className="name">{p.name}</div>
+                <div className="sub"><Icon name="lock" size="sm" />{p.members.length} members</div>
+              </span>
+              <Icon name="chevron" className="muted only-m" />
+            </button>
+          ))}
+        </div>
+
         <div className="sb-section"><span className="t-label">Chats</span></div>
         <div className="sb-list">
           {rest.length === 0 && <p className="t-small muted" style={{ margin: 0, padding: '4px 10px' }}>No chats yet. Search for someone above.</p>}
@@ -169,7 +203,16 @@ export function Main(props: {
         </div>
       </aside>
 
-      {current && current.status === 'active' ? (
+      {currentProject ? (
+        <ProjectView
+          key={currentProject.id}
+          me={me}
+          project={currentProject}
+          onBack={() => setSelected(null)}
+          onChanged={reload}
+          onDelete={() => act(async () => { await deleteProject(currentProject.id); setSelected(null) })}
+        />
+      ) : current && current.status === 'active' ? (
         <ChatView
           key={current.id}
           me={me}
@@ -203,6 +246,18 @@ export function Main(props: {
             )}
           </div>
         </main>
+      )}
+
+      {showNewProject && (
+        <NewProject
+          me={me}
+          onClose={() => setShowNewProject(false)}
+          onCreated={async (id) => {
+            setShowNewProject(false)
+            await reload()
+            setSelected(id)
+          }}
+        />
       )}
 
       {showSettings && (

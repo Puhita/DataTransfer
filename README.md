@@ -7,6 +7,7 @@ See `PLAN.md` for the design and threat model.
 ## Setup (about 15 minutes)
 
 1. **Supabase**: create a free project. In *SQL editor* run `supabase/migrations/0001_init.sql`.
+   For **projects** (groups), also run `supabase/migrations/0003_projects.sql` (after 0001 and 0002), and redeploy the `notify` function.
 2. **Auth settings** (Authentication):
    - Providers → Email: enable, keep *Confirm email* **on**.
    - URL configuration: set *Site URL* to your deployed URL (and add `http://localhost:5173` to redirect URLs for dev).

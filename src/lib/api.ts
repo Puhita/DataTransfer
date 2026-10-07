@@ -175,8 +175,8 @@ export async function listChats(myId: string): Promise<ChatInfo[]> {
   return out
 }
 
-export async function getRoomKey(roomId: string, myId: string): Promise<Uint8Array> {
-  const cached = keystore.roomKey(roomId)
+export async function getRoomKey(roomId: string, myId: string, version: number): Promise<Uint8Array> {
+  const cached = keystore.roomKey(roomId, version)
   if (cached) return cached
   const me = keystore.identity
   if (!me) throw new Error('Locked')
@@ -185,21 +185,42 @@ export async function getRoomKey(roomId: string, myId: string): Promise<Uint8Arr
     .select('wrapped_room_key')
     .eq('room_id', roomId)
     .eq('user_id', myId)
+    .eq('key_version', version)
     .single()
   fail(error)
   const key = await unwrapRoomKey(data!.wrapped_room_key, me)
-  keystore.setRoomKey(roomId, key)
+  keystore.setRoomKey(roomId, version, key)
   return key
+}
+
+/** Every key version I hold for a room, unwrapped (used to share history with a new member). */
+async function allRoomKeys(roomId: string, myId: string): Promise<{ version: number; key: Uint8Array }[]> {
+  const me = keystore.identity
+  if (!me) throw new Error('Locked')
+  const { data, error } = await supabase
+    .from('room_members')
+    .select('wrapped_room_key, key_version')
+    .eq('room_id', roomId)
+    .eq('user_id', myId)
+  fail(error)
+  return Promise.all(
+    (data ?? []).map(async (r) => {
+      const key = await unwrapRoomKey(r.wrapped_room_key, me)
+      keystore.setRoomKey(roomId, r.key_version, key)
+      return { version: r.key_version as number, key }
+    }),
+  )
 }
 
 export async function decodeRow(
   row: MessageRow,
-  roomKey: Uint8Array,
+  myId: string,
   senderSignPublic: string | undefined,
 ): Promise<Decoded> {
   let text: string | null = null
   if (senderSignPublic) {
     try {
+      const roomKey = await getRoomKey(row.room_id, myId, row.key_version)
       text = await decryptMessage(
         row,
         roomKey,
@@ -239,7 +260,7 @@ export async function sendEncrypted(
 ): Promise<MessageRow> {
   const me = keystore.identity
   if (!me) throw new Error('Locked')
-  const key = await getRoomKey(room.id, myId)
+  const key = await getRoomKey(room.id, myId, room.key_version)
   const env = await encryptMessage(plaintext, key, { roomId: room.id, senderId: myId, keyVersion: room.key_version }, me)
   const { data, error } = await supabase
     .from('messages')
@@ -295,3 +316,87 @@ export async function isPeerVerified(peer: PeerInfo): Promise<boolean> {
     return false
   }
 }
+
+// ------------------------------------------------------------------ projects
+
+export interface ProjectInfo {
+  id: string
+  name: string
+  ownerId: string
+  members: PeerInfo[] // everyone in the project, including me
+  chat: RoomInfo
+  secrets: RoomInfo
+}
+
+export async function listProjects(): Promise<ProjectInfo[]> {
+  const { data: projects, error } = await supabase.from('projects').select('*').order('created_at', { ascending: false })
+  fail(error)
+  if (!projects?.length) return []
+  const ids = projects.map((p) => p.id)
+  const [pm, rooms] = await Promise.all([
+    supabase.from('project_members').select('project_id, user_id').in('project_id', ids),
+    supabase.from('rooms').select('id, project_id, kind, key_version').in('project_id', ids),
+  ])
+  fail(pm.error)
+  fail(rooms.error)
+  const userIds = [...new Set((pm.data ?? []).map((m) => m.user_id))]
+  const profiles = await supabase.from('profiles').select('id, username, enc_public_key, sign_public_key').in('id', userIds)
+  fail(profiles.error)
+  const out: ProjectInfo[] = []
+  for (const p of projects) {
+    const r = rooms.data?.filter((x) => x.project_id === p.id) ?? []
+    const chat = r.find((x) => x.kind === 'chat')
+    const secrets = r.find((x) => x.kind === 'secrets')
+    if (!chat || !secrets) continue
+    const members = (pm.data ?? [])
+      .filter((m) => m.project_id === p.id)
+      .map((m) => profiles.data?.find((u) => u.id === m.user_id))
+      .filter((u): u is PeerInfo => !!u)
+      .sort((a, b) => a.username.localeCompare(b.username))
+    out.push({ id: p.id, name: p.name, ownerId: p.owner_id, members, chat, secrets })
+  }
+  return out
+}
+
+/** Create a project; fresh room keys are wrapped for each member (always including me, the owner). */
+export async function createProject(me: ProfileRow, name: string, others: PeerInfo[]): Promise<string> {
+  const chatKey = await newRoomKey()
+  const secKey = await newRoomKey()
+  const everyone = [{ id: me.id, enc_public_key: me.enc_public_key }, ...others.filter((o) => o.id !== me.id)]
+  const p_members = await Promise.all(
+    everyone.map(async (m) => ({
+      user_id: m.id,
+      chat_key: await wrapRoomKey(chatKey, m.enc_public_key),
+      secrets_key: await wrapRoomKey(secKey, m.enc_public_key),
+    })),
+  )
+  const { data, error } = await supabase.rpc('create_project', { p_name: name, p_members })
+  fail(error)
+  return data as string
+}
+
+/** Owner adds someone: re-wrap every key version I hold for them, so they can read history. */
+export async function addProjectMember(me: ProfileRow, project: ProjectInfo, user: PeerInfo): Promise<void> {
+  const p_keys: { room_id: string; key_version: number; wrapped: string }[] = []
+  for (const room of [project.chat, project.secrets]) {
+    for (const { version, key } of await allRoomKeys(room.id, me.id)) {
+      p_keys.push({ room_id: room.id, key_version: version, wrapped: await wrapRoomKey(key, user.enc_public_key) })
+    }
+  }
+  fail((await supabase.rpc('add_project_member', { p_project: project.id, p_user: user.id, p_keys })).error)
+}
+
+/** Owner removes someone: new room keys (next version) wrapped only for the people who stay. */
+export async function removeProjectMember(project: ProjectInfo, user: PeerInfo): Promise<void> {
+  const remaining = project.members.filter((m) => m.id !== user.id)
+  const chatKey = await newRoomKey()
+  const secKey = await newRoomKey()
+  const p_new_keys: { user_id: string; room_id: string; wrapped: string }[] = []
+  for (const m of remaining) {
+    p_new_keys.push({ user_id: m.id, room_id: project.chat.id, wrapped: await wrapRoomKey(chatKey, m.enc_public_key) })
+    p_new_keys.push({ user_id: m.id, room_id: project.secrets.id, wrapped: await wrapRoomKey(secKey, m.enc_public_key) })
+  }
+  fail((await supabase.rpc('remove_project_member', { p_project: project.id, p_user: user.id, p_new_keys })).error)
+}
+
+export const deleteProject = async (id: string) => fail((await supabase.rpc('delete_project', { p_project: id })).error)

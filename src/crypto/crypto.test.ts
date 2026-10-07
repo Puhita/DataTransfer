@@ -97,3 +97,28 @@ describe('safety number', () => {
     expect(ab).toMatch(/^(\d{5} ){5}\d{5}$/)
   })
 })
+
+describe('project key sharing and rotation', () => {
+  it('shares old keys with a new member, and a rotated key excludes a removed member', async () => {
+    const [owner, bob, carol] = await Promise.all([generateIdentity(), generateIdentity(), generateIdentity()])
+    const ctx = (v: number) => ({ roomId: 'room-1', senderId: 'owner', keyVersion: v })
+
+    // v1 is wrapped for the owner and bob; a message is sent
+    const k1 = await newRoomKey()
+    const m1 = await encryptMessage('before carol', k1, ctx(1), owner)
+
+    // owner adds carol: re-wraps v1 for her, so she reads history
+    const carolV1 = await unwrapRoomKey(await wrapRoomKey(k1, await toB64(carol.encPublic)), carol)
+    expect(await decryptMessage(m1, carolV1, ctx(1), await toB64(owner.signPublic))).toBe('before carol')
+
+    // owner removes carol: v2 is wrapped for owner and bob only
+    const k2 = await newRoomKey()
+    const bobV2 = await unwrapRoomKey(await wrapRoomKey(k2, await toB64(bob.encPublic)), bob)
+    const m2 = await encryptMessage('after carol', k2, ctx(2), owner)
+    expect(await decryptMessage(m2, bobV2, ctx(2), await toB64(owner.signPublic))).toBe('after carol')
+    // carol only has v1, which cannot open v2 messages
+    await expect(decryptMessage(m2, carolV1, ctx(2), await toB64(owner.signPublic))).rejects.toThrow()
+    // and she cannot unwrap a key that was wrapped for someone else
+    await expect(unwrapRoomKey(await wrapRoomKey(k2, await toB64(bob.encPublic)), carol)).rejects.toThrow()
+  })
+})

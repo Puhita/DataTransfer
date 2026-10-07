@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { safetyNumber } from '../crypto'
 import { checkPeerKeyChange, isPeerVerified, markPeerVerified, type ChatInfo, type ProfileRow } from '../lib/api'
 import { Avatar, Icon } from '../ui/Icon'
@@ -42,6 +42,7 @@ export function ChatView(props: { me: ProfileRow; chat: ChatInfo; onBack: () => 
   }
 
   const name = chat.peer.username
+  const members = useMemo(() => [chat.peer], [chat.peer])
   const secrets = tab === 'secrets'
 
   return (
@@ -101,9 +102,9 @@ export function ChatView(props: { me: ProfileRow; chat: ChatInfo; onBack: () => 
       )}
 
       {secrets ? (
-        <SecretsRoom key={chat.secrets.id} me={me} chat={chat} room={chat.secrets} />
+        <SecretsRoom key={chat.secrets.id} me={me} members={members} room={chat.secrets} title={"@" + name} />
       ) : (
-        <ChatRoom key={chat.chat.id} me={me} chat={chat} room={chat.chat} />
+        <ChatRoom key={chat.chat.id} me={me} members={members} room={chat.chat} title={"@" + name} />
       )}
 
       {showVerify && (

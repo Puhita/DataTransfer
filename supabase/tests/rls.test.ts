@@ -44,6 +44,7 @@ beforeAll(async () => {
   await db.exec(STUB)
   await db.exec(readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8'))
   await db.exec(readFileSync(new URL('../migrations/0002_push.sql', import.meta.url), 'utf8'))
+  await db.exec(readFileSync(new URL('../migrations/0003_projects.sql', import.meta.url), 'utf8'))
   await db.exec(`insert into auth.users values ('${A}','alice@x.io'),('${B}','bob@x.io'),('${C}','carol@x.io')`)
   await as(A, () => profile(A, 'alice'))
   await as(B, () => profile(B, 'bob'))
@@ -173,5 +174,95 @@ describe('push tokens', () => {
     expect((await db.query(`select 1 from push_tokens where token='${T1}'`)).rows).toHaveLength(1)
     await as(B, () => db.query(`select unregister_push_token('${T1}')`))
     expect((await db.query(`select 1 from push_tokens where token='${T1}'`)).rows).toHaveLength(0)
+  })
+})
+
+describe('projects', () => {
+  let project: string
+  let chatRoom: string
+  let secretsRoom: string
+  const msg = (room: string, sender: string, v = 1) =>
+    `insert into messages (room_id, sender_id, ciphertext, nonce, signature, key_version) values ('${room}','${sender}','c','n','s',${v})`
+  const members = (...ids: string[]) =>
+    JSON.stringify(ids.map((u) => ({ user_id: u, chat_key: `c-${u}`, secrets_key: `s-${u}` })))
+
+  it('creates a project with two rooms; members read it, outsiders do not', async () => {
+    const r = await as(A, () =>
+      db.query<{ create_project: string }>(`select create_project('Apollo', '${members(A, B)}'::jsonb)`),
+    )
+    project = r.rows[0].create_project
+    const rooms = await as(A, () => db.query<{ id: string; kind: string }>(`select id, kind from rooms where project_id='${project}'`))
+    expect(rooms.rows).toHaveLength(2)
+    chatRoom = rooms.rows.find((x) => x.kind === 'chat')!.id
+    secretsRoom = rooms.rows.find((x) => x.kind === 'secrets')!.id
+    expect((await as(B, () => db.query(`select 1 from projects where id='${project}'`))).rows).toHaveLength(1)
+    expect((await as(C, () => db.query(`select 1 from projects where id='${project}'`))).rows).toHaveLength(0)
+    expect((await as(C, () => db.query(`select 1 from rooms where project_id='${project}'`))).rows).toHaveLength(0)
+    // co-members can read each other's profile (for signature keys); outsiders cannot
+    expect((await as(B, () => db.query(`select 1 from profiles where id='${A}'`))).rows).toHaveLength(1)
+    expect((await as(C, () => db.query(`select 1 from profiles where id='${A}'`))).rows).toHaveLength(0)
+  })
+
+  it('rejects bad input: owner missing, unknown user, empty name', async () => {
+    await expect(as(A, () => db.query(`select create_project('x', '${members(B)}'::jsonb)`))).rejects.toThrow(/owner must be a member/)
+    await expect(
+      as(A, () => db.query(`select create_project('x', '${members(A, '00000000-0000-0000-0000-0000000000ff')}'::jsonb)`)),
+    ).rejects.toThrow(/unknown user/)
+    await expect(as(A, () => db.query(`select create_project('  ', '${members(A)}'::jsonb)`))).rejects.toThrow(/bad project name/)
+  })
+
+  it('members send and read; outsiders cannot', async () => {
+    await as(A, () => db.query(msg(chatRoom, A)))
+    await as(B, () => db.query(msg(secretsRoom, B)))
+    expect((await as(B, () => db.query(`select 1 from messages where room_id='${chatRoom}'`))).rows).toHaveLength(1)
+    expect((await as(C, () => db.query(`select 1 from messages`))).rows).toHaveLength(0)
+    await expect(as(C, () => db.query(msg(chatRoom, C)))).rejects.toThrow(/row-level security/)
+  })
+
+  it('only the owner can add members, and the key set must be complete', async () => {
+    const keys = (user: string, versions: number[]) =>
+      JSON.stringify(versions.flatMap((v) => [chatRoom, secretsRoom].map((room_id) => ({ room_id, key_version: v, wrapped: `w-${user}-${v}` }))))
+    await expect(as(B, () => db.query(`select add_project_member('${project}','${C}','${keys(C, [1])}'::jsonb)`))).rejects.toThrow(/only the owner/)
+    await expect(as(A, () => db.query(`select add_project_member('${project}','${C}','[]'::jsonb)`))).rejects.toThrow(/incomplete key set/)
+    await expect(as(A, () => db.query(`select add_project_member('${project}','${B}','${keys(B, [1])}'::jsonb)`))).rejects.toThrow(/already a member/)
+    await as(A, () => db.query(`select add_project_member('${project}','${C}','${keys(C, [1])}'::jsonb)`))
+    // the new member reads history and holds a key for version 1
+    expect((await as(C, () => db.query(`select 1 from messages where room_id='${chatRoom}'`))).rows).toHaveLength(1)
+    expect((await as(C, () => db.query(`select 1 from room_members where key_version=1`))).rows).toHaveLength(2)
+  })
+
+  it('removing a member rotates keys: they lose access, others keep history and get the new version', async () => {
+    const newKeys = (users: string[]) =>
+      JSON.stringify(users.flatMap((user_id) => [chatRoom, secretsRoom].map((room_id) => ({ user_id, room_id, wrapped: `w2-${user_id}` }))))
+    await expect(as(B, () => db.query(`select remove_project_member('${project}','${C}','${newKeys([A, B])}'::jsonb)`))).rejects.toThrow(/only the owner/)
+    await expect(as(A, () => db.query(`select remove_project_member('${project}','${A}','${newKeys([B, C])}'::jsonb)`))).rejects.toThrow(/cannot be removed/)
+    // wrong remaining set (forgot B) is rejected and nothing changes
+    await expect(as(A, () => db.query(`select remove_project_member('${project}','${C}','${newKeys([A])}'::jsonb)`))).rejects.toThrow(/member list changed/)
+    expect((await as(C, () => db.query(`select 1 from projects where id='${project}'`))).rows).toHaveLength(1)
+    expect((await as(A, () => db.query<{ key_version: number }>(`select key_version from rooms where project_id='${project}'`))).rows.every((r) => r.key_version === 1)).toBe(true)
+
+    await as(A, () => db.query(`select remove_project_member('${project}','${C}','${newKeys([A, B])}'::jsonb)`))
+    expect((await as(C, () => db.query(`select 1 from projects`))).rows).toHaveLength(0)
+    expect((await as(C, () => db.query(`select 1 from messages`))).rows).toHaveLength(0)
+    expect((await as(C, () => db.query(`select 1 from room_members`))).rows).toHaveLength(0)
+    const rooms = await as(A, () => db.query<{ key_version: number }>(`select key_version from rooms where project_id='${project}'`))
+    expect(rooms.rows.every((r) => r.key_version === 2)).toBe(true)
+    // remaining members hold versions 1 and 2 per room; history stays readable
+    expect((await as(B, () => db.query(`select 1 from room_members where user_id='${B}'`))).rows).toHaveLength(4)
+    expect((await as(B, () => db.query(`select 1 from messages where room_id='${chatRoom}'`))).rows).toHaveLength(1)
+  })
+
+  it('writes must use the current key version', async () => {
+    await expect(as(A, () => db.query(msg(chatRoom, A, 1)))).rejects.toThrow(/row-level security/)
+    await as(A, () => db.query(msg(chatRoom, A, 2)))
+    await expect(as(C, () => db.query(msg(chatRoom, C, 2)))).rejects.toThrow(/row-level security/)
+  })
+
+  it('only the owner can delete the project; everything cascades', async () => {
+    await as(B, () => db.query(`select delete_project('${project}')`))
+    expect((await as(A, () => db.query(`select 1 from projects where id='${project}'`))).rows).toHaveLength(1)
+    await as(A, () => db.query(`select delete_project('${project}')`))
+    expect((await as(A, () => db.query(`select 1 from rooms where project_id='${project}'`))).rows).toHaveLength(0)
+    expect((await as(A, () => db.query(`select 1 from messages`))).rows).toHaveLength(0)
   })
 })

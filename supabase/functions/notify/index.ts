@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
   const row = payload?.type === 'INSERT' ? payload.record : null
   if (!row?.room_id || !row?.sender_id) return new Response('ignored', { status: 200 })
 
-  const { data: room } = await db.from('rooms').select('kind, chat_id').eq('id', row.room_id).single()
+  const { data: room } = await db.from('rooms').select('kind, chat_id, project_id').eq('id', row.room_id).single()
   const { data: sender } = await db.from('profiles').select('username').eq('id', row.sender_id).single()
   const { data: members } = await db.from('room_members').select('user_id').eq('room_id', row.room_id).neq('user_id', row.sender_id)
   if (!room || !sender || !members?.length) return new Response('no recipients', { status: 200 })
@@ -46,7 +46,7 @@ Deno.serve(async (req) => {
       const res = await fetch(url, {
         method: 'POST',
         headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildFcmMessage(token, sender.username, room.kind as RoomKind, room.chat_id)),
+        body: JSON.stringify(buildFcmMessage(token, sender.username, room.kind as RoomKind, room.chat_id ?? room.project_id)),
       })
       if (res.ok) return void sent++
       if (isDeadToken(res.status, await res.text())) await db.from('push_tokens').delete().eq('token', token)

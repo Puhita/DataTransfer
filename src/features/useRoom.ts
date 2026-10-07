@@ -3,36 +3,40 @@ import { supabase } from '../lib/supabase'
 import {
   decodeRow,
   fetchRoomMessages,
-  getRoomKey,
   sendEncrypted,
-  type ChatInfo,
   type Decoded,
   type MessageRow,
+  type PeerInfo,
   type ProfileRow,
   type RoomInfo,
 } from '../lib/api'
 
 /** Loads, decrypts and live-updates one room. Plaintext exists only in this hook's state. */
-export function useRoom(me: ProfileRow, chat: ChatInfo, room: RoomInfo) {
+export function useRoom(me: ProfileRow, members: PeerInfo[], room: RoomInfo) {
   const [items, setItems] = useState<Decoded[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const seen = useRef(new Set<string>())
 
+  // depend on the signing keys themselves, not the array identity, so list reloads don't refetch the room
+  const keyMap = members.map((m) => m.id + ':' + m.sign_public_key).join('|')
   const signKeyOf = useCallback(
-    (senderId: string) => (senderId === me.id ? me.sign_public_key : senderId === chat.peer.id ? chat.peer.sign_public_key : undefined),
-    [me.id, me.sign_public_key, chat.peer.id, chat.peer.sign_public_key],
+    (senderId: string) => {
+      if (senderId === me.id) return me.sign_public_key
+      const hit = keyMap.split('|').find((e) => e.startsWith(senderId + ':'))
+      return hit?.slice(senderId.length + 1)
+    },
+    [me.id, me.sign_public_key, keyMap],
   )
 
   const add = useCallback(
     async (row: MessageRow) => {
       if (seen.current.has(row.id)) return
       seen.current.add(row.id)
-      const key = await getRoomKey(room.id, me.id)
-      const d = await decodeRow(row, key, signKeyOf(row.sender_id))
+      const d = await decodeRow(row, me.id, signKeyOf(row.sender_id))
       setItems((cur) => [...cur, d])
     },
-    [room.id, me.id, signKeyOf],
+    [me.id, signKeyOf],
   )
 
   useEffect(() => {
@@ -43,8 +47,7 @@ export function useRoom(me: ProfileRow, chat: ChatInfo, room: RoomInfo) {
     ;(async () => {
       try {
         const rows = await fetchRoomMessages(room.id)
-        const key = await getRoomKey(room.id, me.id)
-        const decoded = await Promise.all(rows.map((r) => decodeRow(r, key, signKeyOf(r.sender_id))))
+        const decoded = await Promise.all(rows.map((r) => decodeRow(r, me.id, signKeyOf(r.sender_id))))
         if (!alive) return
         rows.forEach((r) => seen.current.add(r.id))
         setItems(decoded)

@@ -118,7 +118,7 @@ Total ≈ 10–11 working days of focused effort for a human; much less wall-clo
 
 ## 8. Explicitly out of scope for v1
 
-Group chats > 2 (schema supports it, UI doesn't), file attachments, multi-device key sync, push notifications, mobile apps, forward secrecy / double ratchet (room key is static per rotation), message search over ciphertext, admin panel.
+Group chats outside projects (projects, see migration 0003, are the group feature), file attachments, multi-device key sync, push notifications, mobile apps, forward secrecy / double ratchet (room key is static per rotation), message search over ciphertext, admin panel.
 
 ## 9. Decisions I'm assuming unless you object
 

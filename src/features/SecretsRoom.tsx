@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { burnMessage, type ChatInfo, type Decoded, type ProfileRow, type RoomInfo } from '../lib/api'
+import { burnMessage, type Decoded, type PeerInfo, type ProfileRow, type RoomInfo } from '../lib/api'
 import { Icon } from '../ui/Icon'
 import { useRoom } from './useRoom'
 
@@ -32,8 +32,8 @@ function parse(text: string | null): SecretPayload | null {
 
 const when = (iso: string) => new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
 
-export function SecretsRoom(props: { me: ProfileRow; chat: ChatInfo; room: RoomInfo }) {
-  const { items, error, loading, send, setItems } = useRoom(props.me, props.chat, props.room)
+export function SecretsRoom(props: { me: ProfileRow; members: PeerInfo[]; room: RoomInfo; title: string; group?: boolean }) {
+  const { items, error, loading, send, setItems } = useRoom(props.me, props.members, props.room)
   const [name, setName] = useState('')
   const [value, setValue] = useState('')
   const [notes, setNotes] = useState('')
@@ -43,7 +43,8 @@ export function SecretsRoom(props: { me: ProfileRow; chat: ChatInfo; room: RoomI
   const [now, setNow] = useState(Date.now())
   // values the user revealed locally; kept even after the server copy is burned
   const [kept, setKept] = useState<Map<string, Decoded>>(new Map())
-  const peer = props.chat.peer.username
+  const title = props.title
+  const nameOf = (id: string) => '@' + (props.members.find((m) => m.id === id)?.username ?? 'unknown')
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 15_000)
@@ -78,8 +79,8 @@ export function SecretsRoom(props: { me: ProfileRow; chat: ChatInfo; room: RoomI
     <div className="scroll-body">
       <div className="secrets-wrap">
         <div className="stack" style={{ gap: 4 }}>
-          <h2 className="t-h2" style={{ margin: 0 }}>Secrets with @{peer}</h2>
-          <p className="t-body muted" style={{ margin: 0 }}>Only the two of you can open these. Values stay masked until you reveal them.</p>
+          <h2 className="t-h2" style={{ margin: 0 }}>Secrets with {title}</h2>
+          <p className="t-body muted" style={{ margin: 0 }}>{props.group ? 'Only the project members can open these.' : 'Only the two of you can open these.'} Values stay masked until you reveal them.</p>
         </div>
 
         {loading && (
@@ -95,7 +96,7 @@ export function SecretsRoom(props: { me: ProfileRow; chat: ChatInfo; room: RoomI
             <div className="round"><Icon name="key" size="xl" /></div>
             <h2 className="t-h3" style={{ margin: 0 }}>No secrets yet</h2>
             <p className="t-body muted" style={{ margin: 0, maxWidth: 440 }}>
-              Share an API key or .env value with @{peer}. It's encrypted on your device and stays masked until they reveal it.
+              Share an API key or .env value with {title}. It's encrypted on your device and stays masked until they reveal it.
             </p>
           </div>
         )}
@@ -105,7 +106,7 @@ export function SecretsRoom(props: { me: ProfileRow; chat: ChatInfo; room: RoomI
             key={m.id}
             m={m}
             mine={m.senderId === props.me.id}
-            peer={peer}
+            from={m.senderId === props.me.id ? 'you' : nameOf(m.senderId)}
             onReveal={async () => {
               if (m.burn && m.senderId !== props.me.id) {
                 setKept((k) => new Map(k).set(m.id, m))
@@ -123,7 +124,7 @@ export function SecretsRoom(props: { me: ProfileRow; chat: ChatInfo; room: RoomI
         <form className="compose" onSubmit={submit} style={{ marginTop: 12 }}>
           <div className="stack" style={{ gap: 4 }}>
             <h2 className="t-h3" style={{ margin: 0 }}>Send a secret</h2>
-            <span className="hint"><Icon name="lock" size="sm" />Encrypted on this device. Only @{peer} can read it.</span>
+            <span className="hint"><Icon name="lock" size="sm" />Encrypted on this device. Only {props.group ? 'project members' : title} can read it.</span>
           </div>
           <div className="field">
             <label className="lbl" htmlFor="n1">Name</label>
@@ -171,7 +172,7 @@ export function SecretsRoom(props: { me: ProfileRow; chat: ChatInfo; room: RoomI
   )
 }
 
-function SecretItem(props: { m: Decoded; mine: boolean; peer: string; onReveal: () => Promise<void> }) {
+function SecretItem(props: { m: Decoded; mine: boolean; from: string; onReveal: () => Promise<void> }) {
   const { m } = props
   const [shown, setShown] = useState(false)
   const [left, setLeft] = useState(0) // seconds until the clipboard is cleared; 0 = not copied
@@ -239,7 +240,7 @@ function SecretItem(props: { m: Decoded; mine: boolean; peer: string; onReveal: 
       <div className="scard-head">
         <div>
           <h3 className="sname" style={{ margin: 0 }}>{p.name}</h3>
-          <div className="smeta">from {props.mine ? 'you' : '@' + props.peer} · {when(m.createdAt)}</div>
+          <div className="smeta">from {props.from} · {when(m.createdAt)}</div>
         </div>
       </div>
       {(m.expiresAt || m.burn) && (

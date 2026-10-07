@@ -42,7 +42,8 @@ const profile = (id: string, name: string, byEmail = true) =>
 beforeAll(async () => {
   db = new PGlite({ extensions: { citext } })
   await db.exec(STUB)
-  await db.exec(readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8'))
+  for (const f of ['0001_init.sql', '0002_delete_secrets.sql'])
+    await db.exec(readFileSync(new URL(`../migrations/${f}`, import.meta.url), 'utf8'))
   await db.exec(`insert into auth.users values ('${A}','alice@x.io'),('${B}','bob@x.io'),('${C}','carol@x.io')`)
   await as(A, () => profile(A, 'alice'))
   await as(B, () => profile(B, 'bob'))
@@ -135,6 +136,16 @@ describe('chat lifecycle + message access', () => {
     expect((await as(B, () => db.query(`select 1 from messages where id='${id}'`))).rows).toHaveLength(1)
     await as(B, () => db.query(`select burn_message('${id}')`))
     expect((await as(B, () => db.query(`select 1 from messages where id='${id}'`))).rows).toHaveLength(0)
+  })
+
+  it('either member can delete secrets, only the sender can delete chat messages, outsiders neither', async () => {
+    const sec = await as(A, () => db.query<{ id: string }>(`insert into messages (room_id, sender_id, ciphertext, nonce, signature) values ('${secretsRoom}','${A}','c','n','s') returning id`))
+    const chatMsg = await as(A, () => db.query<{ id: string }>(`insert into messages (room_id, sender_id, ciphertext, nonce, signature) values ('${chatRoom}','${A}','c','n','s') returning id`))
+    const del = (uid: string, id: string) => as(uid, () => db.query(`delete from messages where id='${id}' returning id`))
+    expect((await del(C, sec.rows[0].id)).rows).toHaveLength(0)
+    expect((await del(B, chatMsg.rows[0].id)).rows).toHaveLength(0)
+    expect((await del(B, sec.rows[0].id)).rows).toHaveLength(1)
+    expect((await del(A, chatMsg.rows[0].id)).rows).toHaveLength(1)
   })
 
   it('profiles keys are immutable but discoverability can be toggled', async () => {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { RealtimeChannel } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import {
   decodeRow,
@@ -18,6 +19,10 @@ export function useRoom(me: ProfileRow, chat: ChatInfo, room: RoomInfo) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const seen = useRef(new Set<string>())
+  const channel = useRef<RealtimeChannel | null>(null)
+  const lastTypingSent = useRef(0)
+  const typingTimer = useRef<number>(0)
+  const [peerTyping, setPeerTyping] = useState(false)
 
   const signKeyOf = useCallback(
     (senderId: string) => (senderId === me.id ? me.sign_public_key : senderId === chat.peer.id ? chat.peer.sign_public_key : undefined),
@@ -30,9 +35,10 @@ export function useRoom(me: ProfileRow, chat: ChatInfo, room: RoomInfo) {
       seen.current.add(row.id)
       const key = await getRoomKey(room.id, me.id)
       const d = await decodeRow(row, key, signKeyOf(row.sender_id))
+      if (row.sender_id === chat.peer.id) setPeerTyping(false)
       setItems((cur) => [...cur, d])
     },
-    [room.id, me.id, signKeyOf],
+    [room.id, me.id, chat.peer.id, signKeyOf],
   )
 
   useEffect(() => {
@@ -64,12 +70,31 @@ export function useRoom(me: ProfileRow, chat: ChatInfo, room: RoomInfo) {
         const id = (p.old as { id?: string }).id
         if (id) setItems((cur) => cur.filter((m) => m.id !== id))
       })
+      .on('broadcast', { event: 'typing' }, (p) => {
+        // only the other person in this chat counts; payload carries no content
+        if ((p.payload as { u?: string } | undefined)?.u !== chat.peer.id) return
+        setPeerTyping(true)
+        window.clearTimeout(typingTimer.current)
+        typingTimer.current = window.setTimeout(() => setPeerTyping(false), 4000)
+      })
       .subscribe()
+    channel.current = ch
     return () => {
       alive = false
+      window.clearTimeout(typingTimer.current)
+      setPeerTyping(false)
+      channel.current = null
       void supabase.removeChannel(ch)
     }
-  }, [room.id, me.id, signKeyOf, add])
+  }, [room.id, me.id, chat.peer.id, signKeyOf, add])
+
+  /** Tell the other person we are typing (throttled; carries only our user id). */
+  const notifyTyping = useCallback(() => {
+    const now = Date.now()
+    if (now - lastTypingSent.current < 2000) return
+    lastTypingSent.current = now
+    void channel.current?.send({ type: 'broadcast', event: 'typing', payload: { u: me.id } })
+  }, [me.id])
 
   const send = useCallback(
     async (plaintext: string, opts?: { expiresAt?: string | null; burn?: boolean }) => {
@@ -84,5 +109,5 @@ export function useRoom(me: ProfileRow, chat: ChatInfo, room: RoomInfo) {
     [room, me.id, add],
   )
 
-  return { items, error, loading, send, setItems }
+  return { items, error, loading, send, setItems, peerTyping, notifyTyping }
 }

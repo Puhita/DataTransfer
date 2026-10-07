@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { burnMessage, type ChatInfo, type Decoded, type ProfileRow, type RoomInfo } from '../lib/api'
+import { burnMessage, deleteMessage, type ChatInfo, type Decoded, type ProfileRow, type RoomInfo } from '../lib/api'
 import { useRoom } from './useRoom'
 
 interface SecretPayload {
@@ -81,6 +81,16 @@ export function SecretsRoom(props: { me: ProfileRow; chat: ChatInfo; room: RoomI
             m={m}
             mine={m.senderId === props.me.id}
             peer={props.chat.peer.username}
+            onDelete={async () => {
+              if (!window.confirm(`Delete "${parse(m.text)?.name ?? 'this secret'}" for both of you? This cannot be undone.`)) return
+              await deleteMessage(m.id)
+              setItems((cur) => cur.filter((x) => x.id !== m.id))
+              setKept((k) => {
+                const n = new Map(k)
+                n.delete(m.id)
+                return n
+              })
+            }}
             onReveal={async () => {
               if (m.burn && m.senderId !== props.me.id) {
                 setKept((k) => new Map(k).set(m.id, m))
@@ -116,16 +126,25 @@ export function SecretsRoom(props: { me: ProfileRow; chat: ChatInfo; room: RoomI
   )
 }
 
-function SecretItem(props: { m: Decoded; mine: boolean; peer: string; onReveal: () => Promise<void> }) {
+function SecretItem(props: { m: Decoded; mine: boolean; peer: string; onReveal: () => Promise<void>; onDelete: () => Promise<void> }) {
   const { m } = props
   const [shown, setShown] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [delError, setDelError] = useState('')
   const p = parse(m.text)
+
+  const remove = () => props.onDelete().catch((e: Error) => setDelError(e.message))
 
   if (!p)
     return (
       <div className="secret">
         <em className="err">⚠ could not verify or decrypt this entry</em>
+        <div className="row">
+          <button className="ghost small danger" onClick={remove}>
+            Delete
+          </button>
+        </div>
+        {delError && <p className="err small">{delError}</p>}
       </div>
     )
 
@@ -169,7 +188,12 @@ function SecretItem(props: { m: Decoded; mine: boolean; peer: string; onReveal: 
         <button className="ghost small" onClick={copy}>
           {copied ? 'Copied (clears in 30s)' : 'Copy'}
         </button>
+        <span className="spacer" />
+        <button className="ghost small danger" onClick={remove}>
+          🗑 Delete
+        </button>
       </div>
+      {delError && <p className="err small">{delError}</p>}
     </div>
   )
 }

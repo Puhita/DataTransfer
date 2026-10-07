@@ -65,3 +65,17 @@ label.check { display: flex; gap: 8px; align-items: center; color: var(--text); 
   .side { display: none; } .side.open { display: block; } .side.open + .pane { display: none; }
   .back { display: block; }
 }
+
+/* emoji + typing */
+.emoji { position: relative; }
+.emoji > button { padding: 9px 11px; }
+.emojipop { position: absolute; bottom: 48px; left: 0; width: 300px; max-width: 80vw; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 8px; z-index: 5; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+.emojitabs { display: flex; gap: 4px; margin-bottom: 6px; }
+.emojitabs button, .emojigrid button { background: transparent; color: inherit; padding: 4px 6px; font-size: 20px; line-height: 1.2; border-radius: 6px; font-weight: 400; }
+.emojitabs button.on { background: var(--mine); }
+.emojigrid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; max-height: 190px; overflow-y: auto; }
+.emojigrid button:hover { background: var(--bg); }
+.msg.big { font-size: 34px; line-height: 1.2; background: transparent; padding: 2px 6px; }
+.typing { align-self: flex-start; font-size: 13px; color: var(--muted); padding: 2px 6px; }
+.dots i { font-style: normal; animation: blink 1.2s infinite; } .dots i:nth-child(2) { animation-delay: .2s; } .dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%, 60%, 100% { opacity: .2; } 30% { opacity: 1; } }

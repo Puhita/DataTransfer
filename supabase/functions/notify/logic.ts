@@ -43,13 +43,13 @@ export async function signServiceAccountJwt(sa: ServiceAccount, nowSec: number):
 export type RoomKind = 'chat' | 'secrets'
 
 /** What the notification shows. Deliberately contains no message content, only who and what kind. */
-export function buildFcmMessage(token: string, senderUsername: string, kind: RoomKind, chatId: string) {
+export function buildFcmMessage(token: string, senderUsername: string, kind: RoomKind, chatId: string, projectName?: string) {
   return {
     message: {
       token,
       notification: {
-        title: `@${senderUsername}`,
-        body: kind === 'secrets' ? 'Shared a new secret' : 'New message',
+        title: projectName ? `@${senderUsername} · ${projectName}` : `@${senderUsername}`,
+        body: kind === 'secrets' ? 'Added a new secret' : 'New message',
       },
       data: { chatId, kind },
       android: {

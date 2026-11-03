@@ -35,7 +35,8 @@ describe('notification payload', () => {
     expect(chat.notification).toEqual({ title: '@dev_tomas', body: 'New message' })
     expect(chat.data).toEqual({ chatId: 'chat-1', kind: 'chat' })
     const sec = buildFcmMessage('tok', 'dev_tomas', 'secrets', 'chat-1').message
-    expect(sec.notification.body).toBe('Shared a new secret')
+    expect(sec.notification.body).toBe('Added a new secret')
+    expect(buildFcmMessage('tok', 'dev_tomas', 'chat', 'p-1', 'Apollo').message.notification.title).toBe('@dev_tomas · Apollo')
     expect(JSON.stringify(sec)).not.toMatch(/ciphertext|nonce|signature/)
   })
 })

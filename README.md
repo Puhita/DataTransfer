@@ -6,7 +6,7 @@ See `PLAN.md` for the design and threat model.
 
 ## Setup (about 15 minutes)
 
-1. **Supabase**: create a free project. In *SQL editor* run `supabase/migrations/0001_init.sql`.
+1. **Supabase**: create a free project. Fastest: paste `supabase/setup_all.sql` (all four migrations, in order) into the *SQL editor* and run it. Or step by step: run `supabase/migrations/0001_init.sql`.
    Also run `supabase/migrations/0004_delete_secrets.sql` (lets either member delete secrets).
    For **projects** (groups), also run `supabase/migrations/0003_projects.sql` (after 0001 and 0002), and redeploy the `notify` function.
 2. **Auth settings** (Authentication):

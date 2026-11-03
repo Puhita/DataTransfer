@@ -33,7 +33,12 @@ Deno.serve(async (req) => {
   const { data: members } = await db.from('room_members').select('user_id').eq('room_id', row.room_id).neq('user_id', row.sender_id)
   if (!room || !sender || !members?.length) return new Response('no recipients', { status: 200 })
 
-  const { data: tokens } = await db.from('push_tokens').select('token').in('user_id', members.map((m) => m.user_id))
+  let projectName: string | undefined
+  if (room.project_id) projectName = (await db.from('projects').select('name').eq('id', room.project_id).single()).data?.name
+
+  // room_members has one row per key version, so dedupe users
+  const userIds = [...new Set(members.map((m) => m.user_id))]
+  const { data: tokens } = await db.from('push_tokens').select('token').in('user_id', userIds)
   if (!tokens?.length) return new Response('no devices', { status: 200 })
 
   const sa = JSON.parse(Deno.env.get('FIREBASE_SERVICE_ACCOUNT')!) as ServiceAccount
@@ -46,7 +51,7 @@ Deno.serve(async (req) => {
       const res = await fetch(url, {
         method: 'POST',
         headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildFcmMessage(token, sender.username, room.kind as RoomKind, room.chat_id ?? room.project_id)),
+        body: JSON.stringify(buildFcmMessage(token, sender.username, room.kind as RoomKind, room.chat_id ?? room.project_id, projectName)),
       })
       if (res.ok) return void sent++
       if (isDeadToken(res.status, await res.text())) await db.from('push_tokens').delete().eq('token', token)

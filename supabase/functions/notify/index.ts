@@ -5,7 +5,7 @@
 // SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are provided by Supabase.
 // Deploy with --no-verify-jwt: the webhook authenticates with the x-webhook-secret header instead.
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { buildFcmMessage, isDeadToken, secretsMatch, signServiceAccountJwt, type RoomKind, type ServiceAccount } from './logic.ts'
+import { buildFcmMessage, fcmFailure, isDeadToken, secretsMatch, signServiceAccountJwt, type RoomKind, type ServiceAccount } from './logic.ts'
 
 const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
@@ -16,7 +16,7 @@ async function accessToken(sa: ServiceAccount): Promise<string> {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: jwt }),
   })
-  if (!res.ok) throw new Error(`google token exchange failed: ${res.status}`)
+  if (!res.ok) throw new Error(`google token exchange failed: ${res.status} ${(await res.text()).slice(0, 200)}`)
   return (await res.json()).access_token as string
 }
 
@@ -27,11 +27,15 @@ Deno.serve(async (req) => {
   const payload = await req.json().catch(() => null)
   const row = payload?.type === 'INSERT' ? payload.record : null
   if (!row?.room_id || !row?.sender_id) return new Response('ignored', { status: 200 })
+  const skip = (why: string) => {
+    console.log(`notify skipped: ${why}`)
+    return new Response(why, { status: 200 })
+  }
 
   const { data: room } = await db.from('rooms').select('kind, chat_id, project_id').eq('id', row.room_id).single()
   const { data: sender } = await db.from('profiles').select('username').eq('id', row.sender_id).single()
   const { data: members } = await db.from('room_members').select('user_id').eq('room_id', row.room_id).neq('user_id', row.sender_id)
-  if (!room || !sender || !members?.length) return new Response('no recipients', { status: 200 })
+  if (!room || !sender || !members?.length) return skip('no recipients')
 
   let projectName: string | undefined
   if (room.project_id) projectName = (await db.from('projects').select('name').eq('id', room.project_id).single()).data?.name
@@ -39,13 +43,26 @@ Deno.serve(async (req) => {
   // room_members has one row per key version, so dedupe users
   const userIds = [...new Set(members.map((m) => m.user_id))]
   const { data: tokens } = await db.from('push_tokens').select('token').in('user_id', userIds)
-  if (!tokens?.length) return new Response('no devices', { status: 200 })
+  if (!tokens?.length) return skip('no registered devices for the other members (the app must register a token first)')
 
-  const sa = JSON.parse(Deno.env.get('FIREBASE_SERVICE_ACCOUNT')!) as ServiceAccount
-  const bearer = await accessToken(sa)
+  const saRaw = Deno.env.get('FIREBASE_SERVICE_ACCOUNT')
+  if (!saRaw) {
+    console.error('FIREBASE_SERVICE_ACCOUNT secret is not set')
+    return new Response('server misconfigured', { status: 500 })
+  }
+  let sa: ServiceAccount
+  let bearer: string
+  try {
+    sa = JSON.parse(saRaw) as ServiceAccount
+    bearer = await accessToken(sa)
+  } catch (e) {
+    console.error(`cannot authenticate to Firebase with FIREBASE_SERVICE_ACCOUNT: ${(e as Error).message}`)
+    return new Response('server misconfigured', { status: 500 })
+  }
   const url = `https://fcm.googleapis.com/v1/projects/${sa.project_id}/messages:send`
 
   let sent = 0
+  const failures: string[] = []
   await Promise.all(
     tokens.map(async ({ token }) => {
       const res = await fetch(url, {
@@ -54,8 +71,12 @@ Deno.serve(async (req) => {
         body: JSON.stringify(buildFcmMessage(token, sender.username, room.kind as RoomKind, room.chat_id ?? room.project_id, projectName)),
       })
       if (res.ok) return void sent++
-      if (isDeadToken(res.status, await res.text())) await db.from('push_tokens').delete().eq('token', token)
+      const body = await res.text()
+      failures.push(fcmFailure(res.status, body))
+      console.error(`FCM send failed (project ${sa.project_id}): ${fcmFailure(res.status, body)}`)
+      if (isDeadToken(res.status, body)) await db.from('push_tokens').delete().eq('token', token)
     }),
   )
-  return new Response(JSON.stringify({ sent }), { headers: { 'Content-Type': 'application/json' } })
+  console.log(`notify: sent ${sent}, failed ${failures.length}`)
+  return new Response(JSON.stringify({ sent, failed: failures.length, failures: [...new Set(failures)] }), { headers: { 'Content-Type': 'application/json' } })
 })

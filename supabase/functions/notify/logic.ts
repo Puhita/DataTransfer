@@ -60,9 +60,21 @@ export function buildFcmMessage(token: string, senderUsername: string, kind: Roo
   }
 }
 
-/** FCM answers 404 UNREGISTERED / 400 INVALID_ARGUMENT for dead tokens, which we should delete. */
-export const isDeadToken = (status: number, body: string): boolean =>
-  status === 404 || (status === 400 && body.includes('INVALID_ARGUMENT')) || body.includes('UNREGISTERED')
+/** Only delete a token when FCM says THIS token is dead. A bare 404 or 400 also happens when the service account
+ *  belongs to a different Firebase project than the app, and deleting tokens then silently breaks every device. */
+export const isDeadToken = (_status: number, body: string): boolean =>
+  body.includes('UNREGISTERED') || body.includes('is not a valid FCM registration token')
+
+/** Short, secret-free reason for the logs: FCM error status/message, e.g. "SENDER_ID_MISMATCH". */
+export function fcmFailure(status: number, body: string): string {
+  try {
+    const e = JSON.parse(body).error
+    const code = e?.details?.find((d: { errorCode?: string }) => d.errorCode)?.errorCode
+    return `${status} ${code ?? e?.status ?? ''} ${e?.message ?? ''}`.trim()
+  } catch {
+    return `${status} ${body.slice(0, 120)}`
+  }
+}
 
 /** Constant-time comparison for the shared webhook secret. */
 export function secretsMatch(a: string, b: string): boolean {

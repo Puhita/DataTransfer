@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { configured, supabase } from './lib/supabase'
 import { keystore } from './lib/keystore'
+import { cleanupExports } from './lib/exportFile'
 import { stopPush } from './lib/push'
 import { getMyProfile, type ProfileRow } from './lib/api'
 import { AuthScreen } from './features/Auth'
@@ -48,11 +49,13 @@ export function App() {
 
   const logout = useCallback(async () => {
     await stopPush()
+    await cleanupExports()
     keystore.clear()
     await supabase.auth.signOut()
   }, [])
 
   const lock = useCallback(() => {
+    void cleanupExports()
     keystore.clear()
     setStage((s) => (s.kind === 'ready' ? { kind: 'locked', session: s.session, profile: s.profile } : s))
   }, [])

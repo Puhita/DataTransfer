@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { rewrapWithPassphrase, unlockWithPassphrase } from '../crypto'
 import { setDiscoverable, storedKeys, updatePassphraseWrap, type ProfileRow } from '../lib/api'
 import { keystore } from '../lib/keystore'
+import { getPushStatus, onPushStatus, startPush } from '../lib/push'
 import { supabase } from '../lib/supabase'
 import { Avatar, Icon, SecretInput } from '../ui/Icon'
 
@@ -15,12 +16,17 @@ export function Settings(props: { me: ProfileRow; onClose: () => void; onProfile
   const [msg, setMsg] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [push, setPush] = useState(getPushStatus())
 
   useEffect(() => {
+    const off = onPushStatus(() => setPush(getPushStatus()))
     void supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? ''))
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && props.onClose()
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    return () => {
+      off()
+      window.removeEventListener('keydown', onKey)
+    }
   }, [props])
 
   async function toggle(v: boolean) {
@@ -94,6 +100,23 @@ export function Settings(props: { me: ProfileRow; onClose: () => void; onProfile
             <span className="state">{saving ? 'Saving…' : disc ? 'On' : 'Off'}</span>
           </label>
         </div>
+
+        {push.supported && (
+          <div className="setrow" style={{ flexWrap: 'wrap' }}>
+            <div className="stack flex1" style={{ gap: 2 }}>
+              <b style={{ fontWeight: 600 }}>Notifications</b>
+              <span className="t-small muted" role="status">
+                {push.registered
+                  ? 'This phone is registered and will get a notification for new messages and secrets.'
+                  : push.error || 'This phone is not registered yet.'}
+              </span>
+            </div>
+            <button className="btn btn-secondary" onClick={() => void startPush()}>
+              <Icon name={push.registered ? 'check' : 'info'} />
+              Check again
+            </button>
+          </div>
+        )}
 
         <div className="setrow" style={{ flexWrap: 'wrap' }}>
           <div className="stack flex1" style={{ gap: 2 }}>

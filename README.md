@@ -89,3 +89,29 @@ One-time setup:
 7. Push a new release tag (the APK must be rebuilt after `GOOGLE_SERVICES_JSON` exists). On first launch Android asks to allow notifications.
 
 Tapping a notification opens that chat (after unlocking). Pushes are not shown while the app is open in the foreground.
+
+## Moving to a different Supabase project
+
+Everything the server holds (accounts with password hashes, profiles and wrapped keys, chats, projects, room keys, encrypted messages and secrets) can be copied to a new project **with all ids preserved**.
+Ids must not change: messages and keys are cryptographically bound to the user and room ids, so signing up again in the new project would make the old history unreadable.
+
+1. **New project, schema first.** Paste `supabase/setup_all.sql` into its SQL editor. Redo the Auth settings (Site URL, redirect URLs, SMTP, email confirmation).
+2. **Connection strings.** Supabase -> Connect -> *Session pooler* for **both** projects (the direct host is IPv6-only on the free plan). URL-encode special characters in the password.
+3. **Dry run** (reads both, writes nothing):
+   ```
+   $env:OLD_DB_URL = "postgresql://postgres.<oldref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
+   $env:NEW_DB_URL = "postgresql://postgres.<newref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
+   node scripts/migrate-supabase.mjs
+   ```
+   It stops with an error if the new project lacks the schema, or if the same email or username already exists there under a different id (delete that test account first).
+4. **Copy:** `node scripts/migrate-supabase.mjs --apply`. One transaction on the new database; it rolls back unless every old row key arrived. Safe to run again. The old database is only read.
+5. **Point everything at the new project:** `.env.local`, and the GitHub secrets `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` (and `SUPABASE_DB_URL`). Re-run "Deploy web app" and build a new APK tag, since the project URL is baked into the app.
+6. **Notifications in the new project:** secrets `FIREBASE_SERVICE_ACCOUNT` and `WEBHOOK_SECRET`, `npx supabase functions deploy notify --no-verify-jwt`, and the `messages` Insert webhook. Push tokens are not copied; devices register again at next launch.
+7. Everyone logs in again (sessions don't carry over). Passwords, passphrases and recovery keys keep working. Keep the old project until you have checked a few chats, then pause or delete it.
+
+## Secrets: Text (.env) view
+
+In a Secrets room, the **Text (.env)** switch shows every secret as `NAME=value` lines (dotenv rules: quotes for spaces and multi-line values, `#` comments). It starts hidden; **Show as text** reveals it.
+Edit or paste in the box, **Upload file** appends a .env/.txt file to it (200 KB max), **Copy all** copies it (clipboard cleared after 30 s) and **Export file** saves it as `<room>.env` (on Android: the share sheet, so you can save to Files or Drive). The exported file is plain text.
+**Save** adds new names and updates changed values (the old version is deleted for everyone in the room). Secrets missing from the text are never deleted; delete them from the card list.
+Burn-after-reveal secrets you haven't revealed yet are not shown in the text, so reading them can't skip the burn.

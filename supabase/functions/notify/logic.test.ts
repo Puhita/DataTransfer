@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildFcmMessage, isDeadToken, secretsMatch, signServiceAccountJwt } from './logic.ts'
+import { buildFcmMessage, fcmFailure, isDeadToken, secretsMatch, signServiceAccountJwt } from './logic.ts'
 
 const fromB64url = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0))
 
@@ -43,10 +43,18 @@ describe('notification payload', () => {
 
 describe('helpers', () => {
   it('detects dead tokens', () => {
-    expect(isDeadToken(404, '{}')).toBe(true)
-    expect(isDeadToken(400, '{"status":"INVALID_ARGUMENT"}')).toBe(true)
+    expect(isDeadToken(404, '{"error":{"details":[{"errorCode":"UNREGISTERED"}]}}')).toBe(true)
+    expect(isDeadToken(400, '{"error":{"message":"The registration token is not a valid FCM registration token"}}')).toBe(true)
+    // wrong Firebase project / bad payload must NOT delete the device's token
+    expect(isDeadToken(404, '{"error":{"status":"NOT_FOUND","message":"Requested entity was not found."}}')).toBe(false)
+    expect(isDeadToken(403, '{"error":{"details":[{"errorCode":"SENDER_ID_MISMATCH"}]}}')).toBe(false)
+    expect(isDeadToken(400, '{"status":"INVALID_ARGUMENT"}')).toBe(false)
     expect(isDeadToken(200, '')).toBe(false)
     expect(isDeadToken(500, 'internal')).toBe(false)
+  })
+  it('summarises FCM failures for the logs', () => {
+    expect(fcmFailure(403, '{"error":{"status":"PERMISSION_DENIED","message":"SenderId mismatch","details":[{"errorCode":"SENDER_ID_MISMATCH"}]}}')).toBe('403 SENDER_ID_MISMATCH SenderId mismatch')
+    expect(fcmFailure(502, '<html>bad gateway</html>')).toBe('502 <html>bad gateway</html>')
   })
   it('compares secrets strictly and rejects empty', () => {
     expect(secretsMatch('abc123', 'abc123')).toBe(true)

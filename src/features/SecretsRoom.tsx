@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { burnMessage, deleteMessage, type Decoded, type PeerInfo, type ProfileRow, type RoomInfo } from '../lib/api'
 import { Icon } from '../ui/Icon'
+import { SecretsText, type TextSecret } from './SecretsText'
+import { CLIPBOARD_CLEAR_S, useClipboardClear } from './useClipboardClear'
 import { useRoom } from './useRoom'
 
 interface SecretPayload {
@@ -17,7 +19,6 @@ const EXPIRY: { label: string; hours: number | null }[] = [
   { label: 'In 30 days', hours: 720 },
 ]
 
-const CLIPBOARD_CLEAR_S = 30
 const MASK = '•'.repeat(16) // fixed length so the mask never hints at the value's size
 
 function parse(text: string | null): SecretPayload | null {
@@ -40,6 +41,7 @@ export function SecretsRoom(props: { me: ProfileRow; members: PeerInfo[]; room: 
   const [expiry, setExpiry] = useState<number | null>(null)
   const [burn, setBurn] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [mode, setMode] = useState<'cards' | 'text'>('cards')
   const [now, setNow] = useState(Date.now())
   // values the user revealed locally; kept even after the server copy is burned
   const [kept, setKept] = useState<Map<string, Decoded>>(new Map())
@@ -51,15 +53,23 @@ export function SecretsRoom(props: { me: ProfileRow; members: PeerInfo[]; room: 
     return () => clearInterval(t)
   }, [])
 
+  const sendOptions = () => ({ expiresAt: expiry ? new Date(Date.now() + expiry * 3600_000).toISOString() : null, burn })
+
+  function removeLocal(id: string) {
+    setItems((cur) => cur.filter((x) => x.id !== id))
+    setKept((k) => {
+      const n = new Map(k)
+      n.delete(id)
+      return n
+    })
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault()
     setBusy(true)
     try {
       const payload: SecretPayload = { name: name.trim(), value, notes: notes.trim() || undefined }
-      await send(JSON.stringify(payload), {
-        expiresAt: expiry ? new Date(Date.now() + expiry * 3600_000).toISOString() : null,
-        burn,
-      })
+      await send(JSON.stringify(payload), sendOptions())
       setName('')
       setValue('')
       setNotes('')
@@ -75,6 +85,24 @@ export function SecretsRoom(props: { me: ProfileRow; members: PeerInfo[]; room: 
     (m) => !m.expiresAt || new Date(m.expiresAt).getTime() > now,
   )
 
+  // Text view: only secrets that can be read without triggering a burn
+  const locked = new Set(items.filter((m) => m.burn && m.senderId !== props.me.id).map((m) => m.id))
+  const textSecrets: TextSecret[] = visible
+    .filter((m) => !locked.has(m.id))
+    .flatMap((m) => {
+      const p = parse(m.text)
+      return p ? [{ m, name: p.name, value: p.value, notes: p.notes }] : []
+    })
+    .sort((a, b) => b.m.createdAt.localeCompare(a.m.createdAt))
+  const hiddenBurn = visible.filter((m) => locked.has(m.id) && parse(m.text)).length
+
+  const addSecret = (name: string, value: string, notes?: string) => send(JSON.stringify({ name, value, notes }), sendOptions())
+  async function replaceSecret(old: TextSecret, value: string) {
+    await addSecret(old.name, value, old.notes)
+    await deleteMessage(old.m.id)
+    removeLocal(old.m.id)
+  }
+
   return (
     <div className="scroll-body">
       <div className="secrets-wrap">
@@ -83,6 +111,28 @@ export function SecretsRoom(props: { me: ProfileRow; members: PeerInfo[]; room: 
           <p className="t-body muted" style={{ margin: 0 }}>{props.group ? 'Only the project members can open these.' : 'Only the two of you can open these.'} Values stay masked until you reveal them.</p>
         </div>
 
+        <div className="seg" role="group" aria-label="Secrets view">
+          <button type="button" aria-pressed={mode === 'cards'} onClick={() => setMode('cards')}><Icon name="key" size="sm" />Cards</button>
+          <button type="button" aria-pressed={mode === 'text'} onClick={() => setMode('text')}><Icon name="copy" size="sm" />Text (.env)</button>
+        </div>
+
+        {mode === 'text' ? (
+          <>
+            <SecretsText
+              title={title}
+              secrets={textSecrets}
+              hiddenBurn={hiddenBurn}
+              loading={loading}
+              usesOptions={expiry !== null || burn}
+              add={addSecret}
+              replace={replaceSecret}
+            />
+            {error && (
+              <div className="banner banner-err" role="alert"><Icon name="warn" /><div className="body">{error}</div></div>
+            )}
+          </>
+        ) : (
+          <>
         {loading && (
           <div className="scard" aria-busy="true">
             <div className="cluster"><span className="spin" /><span className="t-small muted" style={{ fontWeight: 600 }}>Decrypting…</span></div>
@@ -110,12 +160,7 @@ export function SecretsRoom(props: { me: ProfileRow; members: PeerInfo[]; room: 
             onDelete={async () => {
               if (!window.confirm(`Delete "${parse(m.text)?.name ?? 'this secret'}" for everyone in this room? This cannot be undone.`)) return
               await deleteMessage(m.id)
-              setItems((cur) => cur.filter((x) => x.id !== m.id))
-              setKept((k) => {
-                const n = new Map(k)
-                n.delete(m.id)
-                return n
-              })
+              removeLocal(m.id)
             }}
             onReveal={async () => {
               if (m.burn && m.senderId !== props.me.id) {
@@ -177,6 +222,8 @@ export function SecretsRoom(props: { me: ProfileRow; members: PeerInfo[]; room: 
             </button>
           </div>
         </form>
+          </>
+        )}
       </div>
     </div>
   )
@@ -185,25 +232,15 @@ export function SecretsRoom(props: { me: ProfileRow; members: PeerInfo[]; room: 
 function SecretItem(props: { m: Decoded; mine: boolean; from: string; onReveal: () => Promise<void>; onDelete: () => Promise<void> }) {
   const { m } = props
   const [shown, setShown] = useState(false)
-  const [left, setLeft] = useState(0) // seconds until the clipboard is cleared; 0 = not copied
   const [err, setErr] = useState('')
-  const timer = useRef<number>(0)
+  const clip = useClipboardClear()
+  const left = clip.left
   const p = parse(m.text)
 
   const remove = () => {
     setErr('')
     props.onDelete().catch((e: Error) => setErr(e.message))
   }
-
-  const pending = useRef(false) // clipboard holds this secret and has not been cleared yet
-
-  useEffect(
-    () => () => {
-      window.clearInterval(timer.current)
-      if (pending.current) navigator.clipboard.writeText('').catch(() => {})
-    },
-    [],
-  )
 
   if (!p)
     return (
@@ -235,23 +272,10 @@ function SecretItem(props: { m: Decoded; mine: boolean; from: string; onReveal: 
     setErr('')
     try {
       if (!shown) await props.onReveal()
-      await navigator.clipboard.writeText(p!.value)
+      await clip.copy(p!.value)
     } catch {
-      return setErr('The browser blocked clipboard access.')
+      setErr('The browser blocked clipboard access.')
     }
-    window.clearInterval(timer.current)
-    pending.current = true
-    let s = CLIPBOARD_CLEAR_S
-    setLeft(s)
-    timer.current = window.setInterval(() => {
-      s -= 1
-      setLeft(s)
-      if (s <= 0) {
-        window.clearInterval(timer.current)
-        pending.current = false
-        navigator.clipboard.writeText('').catch(() => {})
-      }
-    }, 1000)
   }
 
   return (

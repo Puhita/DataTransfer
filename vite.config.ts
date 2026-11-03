@@ -27,5 +27,5 @@ export default defineConfig({
   plugins: [react(), cspMeta],
   base: './', // relative asset paths: works on GitHub Pages subpaths and inside the Android app
   build: { target: 'es2022', sourcemap: false },
-  test: { environment: 'node', testTimeout: 30000 },
+  test: { environment: 'node', testTimeout: 30000, hookTimeout: 60000 }, // several in-memory Postgres suites boot in parallel
 })
